@@ -1,5 +1,3 @@
-import React from "react";
-
 const EmptyChat = () => {
   return (
     <div className="flex flex-col flex-1">

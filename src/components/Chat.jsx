@@ -1,98 +1,129 @@
-import React, { useState } from "react";
+import { useEffect, useState } from "react";
 import MessageBubble from "./MessageBubble";
 import { useNavigate, useParams } from "react-router";
 import EmptyChat from "./EmptyChat";
 import ArrowLeftIcon from "./icons/ArrowLeftIcon";
-
-// Mock data - in a real app, this would come from an API
-const chats = {
-  1: {
-    name: "John Doe",
-    avatar: "https://i.pravatar.cc/150?img=1",
-    phone: "+1 234 567 890",
-    messages: [
-      {
-        id: 1,
-        message: "Hey, how are you?",
-        time: "10:30 AM",
-        status: "read",
-        isSent: false,
-      },
-      {
-        id: 2,
-        message: "I am good, thanks! How about you?",
-        time: "10:31 AM",
-        status: "read",
-        isSent: true,
-      },
-      {
-        id: 3,
-        message: "Doing great! Just working on the new project.",
-        time: "10:32 AM",
-        status: "delivered",
-        isSent: false,
-      },
-    ],
-  },
-  2: {
-    name: "Jane Smith",
-    avatar: "https://i.pravatar.cc/150?img=2",
-    phone: "+1 987 654 321",
-    messages: [],
-  },
-  3: {
-    name: "Bob Johnson",
-    avatar: "https://i.pravatar.cc/150?img=3",
-    phone: "+1 555 555 555",
-    messages: [],
-  },
-};
+import {
+  onSnapshot,
+  doc,
+  updateDoc,
+  arrayUnion,
+  Timestamp,
+  serverTimestamp,
+} from "firebase/firestore";
+import { db } from "../../firebase";
 
 function Chat() {
-  const { id } = useParams();
-  const chat = chats[id];
+  const { userId, chatId } = useParams();
 
   const navigate = useNavigate();
 
+  const [conversation, setConversation] = useState([]);
+  const [chatUser, setChatUser] = useState({});
   const [input, setInput] = useState("");
 
-  const handleSend = () => {
+  const loggedInUser = JSON.parse(localStorage.getItem("loggedUser"));
+
+  const chat_id =
+    userId < chatId ? `${userId}-${chatId}` : `${chatId}-${userId}`;
+
+  const handleSend = (e) => {
+    e.preventDefault();
+
     if (input.trim() === "") return;
 
-    const newMessage = {
-      id: Date.now(),
-      message: input,
-      time: new Date().toLocaleTimeString(),
-      status: "sent",
-      isSent: true,
-    };
+    updateDoc(doc(db, "chats", chat_id), {
+      messages: arrayUnion({
+        id: crypto.randomUUID(),
+        message: input,
+        senderId: loggedInUser.uid,
+        date: Timestamp.now(),
+        status: "sent",
+      }),
+    });
 
-    chats[id].messages.unshift(newMessage);
+    updateDoc(doc(db, "userChats", loggedInUser.uid), {
+      [chatUser.id + ".date"]: serverTimestamp(),
+      [chatUser.id + ".recent_message"]: input,
+    });
+
+    updateDoc(doc(db, "userChats", chatUser.id), {
+      [loggedInUser.uid + ".userInfo"]: {
+        id: loggedInUser.uid,
+        name: loggedInUser.displayName,
+        profilePic: loggedInUser.photoURL,
+      },
+      [loggedInUser.uid + ".date"]: serverTimestamp(),
+      [loggedInUser.uid + ".recent_message"]: input,
+    });
+
     setInput("");
   };
 
-  if (!chat) {
+  const handleMarkAsRead = async (messageId) => {
+    const updatedConversation = conversation.map((msg) => {
+      if (msg.id === messageId) {
+        return { ...msg, status: "read" };
+      }
+      return msg;
+    });
+
+    await updateDoc(doc(db, "chats", chat_id), {
+      messages: updatedConversation,
+    });
+  };
+
+  const handleMarkAsDelivered = async (messageId) => {
+    const updatedConversation = conversation.map((msg) => {
+      if (msg.id === messageId) {
+        return { ...msg, status: "delivered" };
+      }
+      return msg;
+    });
+
+    await updateDoc(doc(db, "chats", chat_id), {
+      messages: updatedConversation,
+    });
+  };
+
+  if (!chatId) {
     return <EmptyChat />; // Or some placeholder/error component
   }
+
+  useEffect(() => {
+    if (chatId) {
+      const chatUser = JSON.parse(localStorage.getItem("chatUser"));
+      setChatUser(chatUser);
+      const chats = onSnapshot(doc(db, "chats", chat_id), (doc) => {
+        if (doc.exists()) {
+          setConversation(doc.data().messages);
+        }
+      });
+
+      return () => {
+        chats();
+      };
+    }
+  }, [chatId, chat_id]);
 
   return (
     <div className="flex flex-col flex-1 h-screen">
       {/* Chat Header */}
-      <div className="flex items-center">
-        <div className="lg:hidden">
-          <button className="p-3" onClick={() => navigate("/")}>
+      <div className="flex items-center px-2 py-2 gap-2">
+        <div className="md:hidden">
+          <button className="p-2" onClick={() => navigate(`/${userId}`)}>
             <ArrowLeftIcon className="h-4" />
           </button>
         </div>
-        <div className="flex items-center p-3">
+        <div className="flex-1 flex items-center gap-3 px-2">
           <img
-            src={chat.avatar}
-            alt={`${chat.name}'s avatar`}
-            className="w-10 h-10 rounded-full mr-4"
+            src={chatUser.profilePic}
+            alt={`${chatUser.name}'s avatar`}
+            className="w-8 h-8 rounded-full"
           />
           <div className="flex-1">
-            <h3 className="font-semibold text-gray-800">{chat.name}</h3>
-            <p className="text-xs text-gray-500">{chat.phone}</p>
+            <h3 className="font-semibold text-gray-800">{chatUser.name}</h3>
+            <p className="text-xs text-gray-500">{chatUser.phone}</p>
           </div>
         </div>
       </div>
@@ -107,26 +138,30 @@ function Chat() {
           backgroundPosition: "center",
         }}
       >
-        {[...chat.messages].map((msg) => (
-          <MessageBubble key={msg.id} {...msg} />
+        {[...conversation].reverse().map((msg) => (
+          <MessageBubble
+            key={msg.id}
+            {...msg}
+            onMarkAsRead={handleMarkAsRead}
+            onMarkAsDelivered={handleMarkAsDelivered}
+          />
         ))}
       </div>
 
       {/* Message Input Footer */}
-      <div className="flex items-center p-3 border-t border-gray-300">
+      <div className="flex items-center p-2 border-t border-gray-300">
         <form onSubmit={handleSend} className="flex-1 flex items-center">
           <textarea
-            className="flex-1 p-2 mx-2 border-none rounded-full focus:outline-none px-4"
+            className="flex-1 p-2 border-none text-sm leading-4 rounded-lg focus:outline-none field-sizing-content max-h-20 resize-none [&::-webkit-scrollbar]:w-[0.25rem] [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-black/50"
             placeholder="Type a message"
             type="text"
             value={input}
-            rows={1}
-            maxRows={5}
+            autoComplete="false"
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                handleSend();
+              if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
+                handleSend(e);
               }
             }}
           />

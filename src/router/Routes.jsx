@@ -1,28 +1,39 @@
-import { createBrowserRouter, RouterProvider } from "react-router";
-
+import { useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router";
 import App from "../App";
 import EmptyChat from "../components/EmptyChat";
 import Chat from "../components/Chat";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "../../firebase";
+import Unauth from "../components/Unauth";
 
-const router = createBrowserRouter([
-  {
-    path: "/",
-    element: <App />,
-    children: [
-      {
-        path: "",
-        element: <EmptyChat />,
-      },
-      {
-        path: "/:id",
-        element: <Chat />,
-      },
-    ],
-  },
-]);
+const Router = () => {
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        localStorage.setItem("accessToken", user.accessToken);
+      } else {
+        localStorage.removeItem("accessToken");
+      }
+    });
 
-const Routes = () => {
-  return <RouterProvider router={router} />;
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Navigate to="/login" />} />
+        <Route path="/login" element={<Unauth>Login</Unauth>} />
+        <Route path="/:userId" element={<App />}>
+          <Route index element={<EmptyChat />} />
+          <Route path="/:userId/:chatId" element={<Chat />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
 };
 
-export default Routes;
+export default Router;
